@@ -1,9 +1,12 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
+using System.Security.Principal;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -15,6 +18,15 @@ namespace LongFilenames
 		public Form1()
 		{
 			InitializeComponent();
+		}
+
+		private void Form1_Load(object sender, EventArgs e)
+		{
+			string[] args = Environment.GetCommandLineArgs();
+			for (int a = 1; a < args.Length; a++)
+			{
+				lstFiles.Items.Add(args[a]);
+			}
 		}
 
 		private void lstFiles_DragDrop(object sender, DragEventArgs e)
@@ -51,6 +63,8 @@ namespace LongFilenames
 				return;
 			}
 
+			txtLog.Clear();
+
 			toolStripStatusLabel1.Text = "Scanning all paths...";
 			Application.DoEvents();
 
@@ -65,12 +79,25 @@ namespace LongFilenames
 			toolStripProgressBar1.Visible = true;
 			Application.DoEvents();
 
-			delete();
+			///////////////////////////////////
+			// Delete the files
+			///////////////////////////////////
+			string[] files = lstFiles.Items.Cast<string>().ToArray();
+			foreach (string file in files)
+			{
+				if (formClosing) break;
+				if (delete(file))
+				{
+					lstFiles.Items.Remove(file);
+					Application.DoEvents();
+				}
+			}
+			///////////////////////////////////
+
 			if (formClosing) return;
 
 			toolStripProgressBar1.Visible = false;
 			toolStripStatusLabel1.Text = string.Format("Deleted {0} item{1}", scannedFiles, scannedFiles == 1 ? "" : "s");
-			lstFiles.Items.Clear();
 
 		}
 
@@ -115,26 +142,19 @@ namespace LongFilenames
 			Application.DoEvents();
 		}
 
-		private void delete()
+		private bool delete(string path)
 		{
-			string[] files = lstFiles.Items.Cast<string>().ToArray();
-			foreach (string file in files)
-			{
-				if (formClosing) break;
-				delete(file);
-			}
-		}
-
-		private void delete(string path)
-		{
+			bool result = false;
 			if (LongDirectory.Exists(path))
 			{
-				foreach (string sub in LongDirectory.GetDirectories(path))
+				string[] subs = LongDirectory.GetDirectories(path);
+				foreach (string sub in subs)
 				{
 					if (formClosing) break;
 					delete(sub);
 				}
-				foreach (string file in LongDirectory.GetFiles(path))
+				string[] files = LongDirectory.GetFiles(path);
+				foreach (string file in files)
 				{
 					if (formClosing) break;
 					delete(file);
@@ -142,6 +162,7 @@ namespace LongFilenames
 				try
 				{
 					LongDirectory.Delete(path);
+					result = true;
 				}
 				catch (Exception ex)
 				{
@@ -153,6 +174,7 @@ namespace LongFilenames
 					{
 						txtLog.AppendText(string.Format("{0}\r\n", ex.Message));
 					}
+					result = false;
 				}
 				toolStripProgressBar1.Value++;
 				Application.DoEvents();
@@ -162,20 +184,84 @@ namespace LongFilenames
 				try
 				{
 					LongFile.Delete(path);
+					result = true;
 				}
 				catch (Exception ex)
 				{
 					txtLog.AppendText(string.Format("{0}: {1}\r\n", ex.Message, path));
+					result = false;
 				}
 				toolStripProgressBar1.Value++;
 				Application.DoEvents();
 			}
+			return result;
 		}
 
 		bool formClosing = false;
 		private void Form1_FormClosing(object sender, FormClosingEventArgs e)
 		{
 			formClosing = true;
+		}
+
+		private void stopTortoiseGitCacheToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			Process.Start("taskkill", "/im tgitcache.exe /f");
+		}
+
+		private void setupFileAndFolderContextMenuToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			bool isElevated;
+			using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+			{
+				WindowsPrincipal principal = new WindowsPrincipal(identity);
+				isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+			}
+			if (!isElevated)
+			{
+				MessageBox.Show("You must run this with Administrator rights");
+				return;
+			}
+
+			RegistryKey reg = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry32);
+
+			var subKey = reg.OpenSubKey("*\\shell\\Open with LongFilenames", true);
+			if (subKey == null) subKey = reg.CreateSubKey("*\\shell\\Open with LongFilenames");
+			if (subKey.GetValue("Icon") == null) subKey.SetValue("Icon", Application.ExecutablePath);
+
+			subKey = reg.OpenSubKey("*\\shell\\Open with LongFilenames\\command", true);
+			if (subKey == null) subKey = reg.CreateSubKey("*\\shell\\Open with LongFilenames\\command");
+			if (subKey.GetValue("") == null) subKey.SetValue("", string.Format("\"{0}\" \"%1\"", Application.ExecutablePath));
+
+			subKey = reg.OpenSubKey("Directory\\shell\\Open with LongFilenames", true);
+			if (subKey == null) subKey = reg.CreateSubKey("Directory\\shell\\Open with LongFilenames");
+			if (subKey.GetValue("Icon") == null) subKey.SetValue("Icon", Application.ExecutablePath);
+
+			subKey = reg.OpenSubKey("Directory\\shell\\Open with LongFilenames\\command", true);
+			if (subKey == null) subKey = reg.CreateSubKey("Directory\\shell\\Open with LongFilenames\\command");
+			if (subKey.GetValue("") == null) subKey.SetValue("", string.Format("\"{0}\" \"%1\"", Application.ExecutablePath));
+		}
+
+		private void removeFileAndFolderContextMenuToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			bool isElevated;
+			using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+			{
+				WindowsPrincipal principal = new WindowsPrincipal(identity);
+				isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+			}
+			if (!isElevated)
+			{
+				MessageBox.Show("You must run this with Administrator rights");
+				return;
+			}
+
+			RegistryKey reg = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry32);
+
+			var subKey = reg.OpenSubKey("*\\shell\\Open with LongFilenames", true);
+			if (subKey != null) reg.DeleteSubKeyTree("*\\shell\\Open with LongFilenames");
+
+			subKey = reg.OpenSubKey("Directory\\shell\\Open with LongFilenames", true);
+			if (subKey != null) reg.DeleteSubKeyTree("Directory\\shell\\Open with LongFilenames");
 		}
 	}
 }
